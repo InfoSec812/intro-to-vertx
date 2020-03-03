@@ -1,7 +1,6 @@
 package com.redhat.demo;
 
 import io.vertx.core.AbstractVerticle;
-import io.vertx.core.DeploymentOptions;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 
@@ -9,17 +8,21 @@ public class MainVerticle extends AbstractVerticle {
 
     @Override
     public void start() {
-        DeploymentOptions options = new DeploymentOptions()
-            .setInstances(8)
-            .setWorker(true);
-        vertx.deployVerticle("com.redhat.demo.HelloVerticle", options);
+        vertx.deployVerticle(new HelloVerticle());
 
         Router router = Router.router(vertx);
 
         router.get("/api/v1/hello").handler(this::helloHandler);
         router.get("/api/v1/hello/:name").handler(this::helloByNameHandler);
 
-        vertx.createHttpServer().requestHandler(router).listen(8080);
+        int httpPort;
+        try {
+            httpPort = Integer.parseInt(System.getProperty("http.port", "8080"));
+        } catch (NumberFormatException nfe) {
+            httpPort = 8080;
+        }
+
+        vertx.createHttpServer().requestHandler(router).listen(httpPort);
     }
 
     void helloHandler(RoutingContext ctx) {
