@@ -38,6 +38,10 @@
             <groupId>io.vertx</groupId>
             <artifactId>vertx-infinispan</artifactId>
         </dependency>
+        <dependency>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-config</artifactId>
+        </dependency>
     </dependencies>
     <build>
         <plugins>
