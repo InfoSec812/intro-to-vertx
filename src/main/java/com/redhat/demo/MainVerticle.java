@@ -10,6 +10,7 @@ import io.vertx.core.Promise;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.handler.StaticHandler;
 
 public class MainVerticle extends AbstractVerticle {
 
@@ -19,9 +20,27 @@ public class MainVerticle extends AbstractVerticle {
 
         Router router = Router.router(vertx);
 
+        router.route().handler(ctx -> {
+            String authToken = ctx.request().getHeader("AUTH_TOKEN");
+            if (authToken != null && "mySuperSecretAuthToken".contentEquals(authToken)) {
+                ctx.next();
+            } else {
+                ctx.response().setStatusCode(401).setStatusMessage("UNAUTHORIZED").end();
+            }
+        });
         router.get("/api/v1/hello").handler(this::helloHandler);
         router.get("/api/v1/hello/:name").handler(this::helloByNameHandler);
+        router.route().handler(StaticHandler.create("web"));
 
+        doConfig(start, router);
+    }
+
+    /**
+     * Set up and execute the {@link ConfigRetriever} to load the configuration for the application
+     * @param start The {@link Promise} which is to be resolved as this Verticle loads
+     * @param router The {@link Router} for the REST API paths
+     */
+    private void doConfig(Promise<Void> start, Router router) {
         ConfigStoreOptions defaultConfig = new ConfigStoreOptions()
                 .setType("file")
                 .setFormat("json")
@@ -36,6 +55,12 @@ public class MainVerticle extends AbstractVerticle {
         cfgRetriever.getConfig(handler);
     }
 
+    /**
+     * When the {@link ConfigRetriever} resolves, this method handles those results
+     * @param start The {@link Promise} to be resolved either successfully or failed when the configuration is loaded and the HTTP server is created
+     * @param router The {@link Router} which is configured to handle the HTTP requests
+     * @param asyncResult The {@link AsyncResult}, potentially containing a {@link JsonObject} with the loaded configuration
+     */
     void handleConfigResults(Promise<Void> start, Router router, AsyncResult<JsonObject> asyncResult) {
 
         if (asyncResult.succeeded()) {
@@ -49,12 +74,20 @@ public class MainVerticle extends AbstractVerticle {
         }
     }
 
+    /**
+     * A handler for requests to the `/api/v1/hello` REST endpoint
+     * @param ctx The {@link RoutingContext} of the request
+     */
     void helloHandler(RoutingContext ctx) {
         vertx.eventBus().request("hello.vertx.addr", "", reply -> {
             ctx.request().response().end((String)reply.result().body());
         });
     }
 
+    /**
+     * A handler for requests to the `/api/v1/hello/:name` REST endpoint
+     * @param ctx The {@link RoutingContext} of the request
+     */
     void helloByNameHandler(RoutingContext ctx) {
         String name = ctx.pathParam("name");
         vertx.eventBus().request("hello.named.addr", name, reply -> {
