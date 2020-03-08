@@ -39,9 +39,13 @@ public class MainVerticle extends AbstractVerticle {
                 .setType("file")
                 .setFormat("json")
                 .setConfig(new JsonObject().put("path", "config.json"));
+        ConfigStoreOptions cliConfig = new ConfigStoreOptions()
+                .setType("json")
+                .setConfig(config());
 
         ConfigRetrieverOptions opts = new ConfigRetrieverOptions()
-                .addStore(defaultConfig);
+                .addStore(defaultConfig)
+                .addStore(cliConfig);
 
         ConfigRetriever cfgRetriever = ConfigRetriever.create(vertx, opts);
 
