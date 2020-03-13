@@ -1,5 +1,8 @@
 package com.redhat.demo;
 
+import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.FlywayException;
+
 import io.vertx.config.ConfigRetriever;
 import io.vertx.config.ConfigRetrieverOptions;
 import io.vertx.config.ConfigStoreOptions;
@@ -26,6 +29,10 @@ public class MainVerticle extends AbstractVerticle {
         vertx.deployVerticle("Hello.groovy");
         vertx.deployVerticle("Hello.js");
 
+        Handler<AsyncResult<Void>> dbMigrationResultHandler = result -> this.handleMigrationResult(start, result);
+
+        vertx.executeBlocking(this::doDatabaseMigrations, dbMigrationResultHandler);
+
         Router router = Router.router(vertx);
 
         SessionStore store = LocalSessionStore.create(vertx);
@@ -38,6 +45,23 @@ public class MainVerticle extends AbstractVerticle {
         router.route().handler(StaticHandler.create("web"));
 
         doConfig(start, router);
+    }
+
+    void handleMigrationResult(Promise<Void> start, AsyncResult<Void> result) {
+        if (result.failed()) {
+            start.fail(result.cause());
+        }
+    }
+
+    void doDatabaseMigrations(Promise<Void> promise) {
+        Flyway flyway = Flyway.configure().dataSource("jdbc:postgresql://127.0.0.1:5432/todo", "postgres", "introduction").load();
+
+        try {
+            flyway.migrate();
+            promise.complete();
+        } catch (FlywayException fe) {
+            promise.fail(fe);
+        }
     }
 
     /**
