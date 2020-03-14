@@ -8,8 +8,11 @@ import io.vertx.config.ConfigRetrieverOptions;
 import io.vertx.config.ConfigStoreOptions;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.AsyncResult;
+import io.vertx.core.CompositeFuture;
+import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Promise;
+import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
@@ -23,16 +26,38 @@ import io.vertx.ext.web.sstore.SessionStore;
 
 public class MainVerticle extends AbstractVerticle {
 
+    final JsonObject loadedConfig = new JsonObject();
+
     @Override
     public void start(Promise<Void> start) {
-        // vertx.deployVerticle(new HelloVerticle());
-        vertx.deployVerticle("Hello.groovy");
-        vertx.deployVerticle("Hello.js");
 
-        Handler<AsyncResult<Void>> dbMigrationResultHandler = result -> this.handleMigrationResult(start, result);
+        // Sequential Composition - Do A, Then B, Then C . . . . Handle errors
+        // Concurrent Composition - Do A, B, C and D and once all/any complete - Do something else....
+        doConfig()
+            .compose(this::storeConfig)
+            .compose(this::doDatabaseMigrations)
+            .compose(this::configureRouter)
+            .compose(this::startHttpServer)
+            .compose(this::deployOtherVerticles)
+            .setHandler(start::handle);
+    }
 
-        vertx.executeBlocking(this::doDatabaseMigrations, dbMigrationResultHandler);
+    Future<Void> deployOtherVerticles(HttpServer server) {
+        Future<String> helloGroovy = Future.future(promise -> vertx.deployVerticle("Hello.groovy", promise));
+        Future<String> helloJs = Future.future(promise -> vertx.deployVerticle("Hello.js", promise));
 
+        return CompositeFuture.all(helloGroovy, helloJs).mapEmpty();
+    }
+
+    Future<HttpServer> startHttpServer(Router router) {
+        JsonObject http = loadedConfig.getJsonObject("http");
+        int httpPort = http.getInteger("port");
+        HttpServer server = vertx.createHttpServer().requestHandler(router);
+
+        return Future.<HttpServer>future(promise -> server.listen(httpPort, promise));
+    }
+
+    Future<Router> configureRouter(Void unused) {
         Router router = Router.router(vertx);
 
         SessionStore store = LocalSessionStore.create(vertx);
@@ -44,7 +69,12 @@ public class MainVerticle extends AbstractVerticle {
         router.get("/api/v1/hello/:name").handler(this::helloByNameHandler);
         router.route().handler(StaticHandler.create("web"));
 
-        doConfig(start, router);
+        return Promise.succeededPromise(router).future();
+    }
+
+    Future<Void> storeConfig(JsonObject config) {
+        loadedConfig.mergeIn(config);
+        return Promise.<Void>succeededPromise().future();
     }
 
     void handleMigrationResult(Promise<Void> start, AsyncResult<Void> result) {
@@ -53,14 +83,18 @@ public class MainVerticle extends AbstractVerticle {
         }
     }
 
-    void doDatabaseMigrations(Promise<Void> promise) {
-        Flyway flyway = Flyway.configure().dataSource("jdbc:postgresql://127.0.0.1:5432/todo", "postgres", "introduction").load();
+    Future<Void> doDatabaseMigrations(Void unused) {
+        JsonObject dbConfig = loadedConfig.getJsonObject("db");
+        String url = dbConfig.getString("url", "jdbc:postgresql://127.0.0.1:5432/todo");
+        String adminUser = dbConfig.getString("admin_user", "postgres");
+        String adminPass = dbConfig.getString("admin_pass", "introduction");
+        Flyway flyway = Flyway.configure().dataSource(url, adminUser, adminPass).load();
 
         try {
             flyway.migrate();
-            promise.complete();
+            return Promise.<Void>succeededPromise().future();
         } catch (FlywayException fe) {
-            promise.fail(fe);
+            return Promise.<Void>failedPromise(fe).future();
         }
     }
 
@@ -69,7 +103,7 @@ public class MainVerticle extends AbstractVerticle {
      * @param start The {@link Promise} which is to be resolved as this Verticle loads
      * @param router The {@link Router} for the REST API paths
      */
-    private void doConfig(Promise<Void> start, Router router) {
+    Future<JsonObject> doConfig() {
         ConfigStoreOptions defaultConfig = new ConfigStoreOptions()
                 .setType("file")
                 .setFormat("json")
@@ -84,27 +118,7 @@ public class MainVerticle extends AbstractVerticle {
 
         ConfigRetriever cfgRetriever = ConfigRetriever.create(vertx, opts);
 
-        Handler<AsyncResult<JsonObject>> handler = asyncResult -> this.handleConfigResults(start, router, asyncResult);
-        cfgRetriever.getConfig(handler);
-    }
-
-    /**
-     * When the {@link ConfigRetriever} resolves, this method handles those results
-     * @param start The {@link Promise} to be resolved either successfully or failed when the configuration is loaded and the HTTP server is created
-     * @param router The {@link Router} which is configured to handle the HTTP requests
-     * @param asyncResult The {@link AsyncResult}, potentially containing a {@link JsonObject} with the loaded configuration
-     */
-    void handleConfigResults(Promise<Void> start, Router router, AsyncResult<JsonObject> asyncResult) {
-
-        if (asyncResult.succeeded()) {
-            JsonObject config = asyncResult.result();
-            JsonObject http = config.getJsonObject("http");
-            int httpPort = http.getInteger("port");
-            vertx.createHttpServer().requestHandler(router).listen(httpPort);
-            start.complete();
-        } else {
-            start.fail("Unable to load configuration.");
-        }
+        return Future.future(promise -> cfgRetriever.getConfig(promise));
     }
 
     /**
