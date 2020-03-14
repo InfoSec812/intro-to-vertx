@@ -10,7 +10,6 @@ import io.vertx.core.AbstractVerticle;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.CompositeFuture;
 import io.vertx.core.Future;
-import io.vertx.core.Handler;
 import io.vertx.core.Promise;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
@@ -32,7 +31,7 @@ public class MainVerticle extends AbstractVerticle {
     public void start(Promise<Void> start) {
 
         // Sequential Composition - Do A, Then B, Then C . . . . Handle errors
-        // Concurrent Composition - Do A, B, C and D and once all/any complete - Do something else....
+        // https://vertx.io/docs/vertx-core/java/#_sequential_composition
         doConfig()
             .compose(this::storeConfig)
             .compose(this::doDatabaseMigrations)
@@ -42,6 +41,12 @@ public class MainVerticle extends AbstractVerticle {
             .setHandler(start::handle);
     }
 
+    /**
+     * Deploy our other {@link io.vertx.core.Verticle}s in concurrently
+     * https://vertx.io/docs/vertx-core/java/#_concurrent_composition
+     * @param server The {@link HttpServer} instance (Not used in this method)
+     * @return A {@link Future} which is resolved once both of the Verticles are deployed
+     */
     Future<Void> deployOtherVerticles(HttpServer server) {
         Future<String> helloGroovy = Future.future(promise -> vertx.deployVerticle("Hello.groovy", promise));
         Future<String> helloJs = Future.future(promise -> vertx.deployVerticle("Hello.js", promise));
@@ -84,7 +89,7 @@ public class MainVerticle extends AbstractVerticle {
     }
 
     Future<Void> doDatabaseMigrations(Void unused) {
-        JsonObject dbConfig = loadedConfig.getJsonObject("db");
+        JsonObject dbConfig = loadedConfig.getJsonObject("db", new JsonObject());
         String url = dbConfig.getString("url", "jdbc:postgresql://127.0.0.1:5432/todo");
         String adminUser = dbConfig.getString("admin_user", "postgres");
         String adminPass = dbConfig.getString("admin_pass", "introduction");
