@@ -1,26 +1,15 @@
 package com.redhat.demo;
 
-import org.flywaydb.core.Flyway;
-import org.flywaydb.core.api.FlywayException;
-
 import io.vertx.config.ConfigRetriever;
 import io.vertx.config.ConfigRetrieverOptions;
 import io.vertx.config.ConfigStoreOptions;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.CompositeFuture;
+import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
-import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
-import io.vertx.ext.web.RoutingContext;
-import io.vertx.ext.web.handler.CSRFHandler;
-import io.vertx.ext.web.handler.CorsHandler;
-import io.vertx.ext.web.handler.LoggerHandler;
-import io.vertx.ext.web.handler.SessionHandler;
-import io.vertx.ext.web.handler.StaticHandler;
-import io.vertx.ext.web.sstore.LocalSessionStore;
-import io.vertx.ext.web.sstore.SessionStore;
 
 public class MainVerticle extends AbstractVerticle {
 
@@ -32,9 +21,6 @@ public class MainVerticle extends AbstractVerticle {
         // https://vertx.io/docs/vertx-core/java/#_sequential_composition
         doConfig()
             .compose(this::storeConfig)
-            .compose(this::doDatabaseMigrations)
-            .compose(this::configureRouter)
-            .compose(this::startHttpServer)
             .compose(this::deployOtherVerticles)
             .setHandler(start::handle);
     }
@@ -73,89 +59,19 @@ public class MainVerticle extends AbstractVerticle {
     }
 
     /**
-     * Uses the {@code loadedConfig} to try to perform the required database schema migrations
-     * @param unused A {@link Void} object which is ignored
-     * @return A {@link Future} which indicates the success/failure of this operation
-     */
-    Future<Void> doDatabaseMigrations(Void unused) {
-        JsonObject dbConfig = loadedConfig.getJsonObject("db", new JsonObject());
-        String url = dbConfig.getString("url", "jdbc:postgresql://127.0.0.1:5432/todo");
-        String adminUser = dbConfig.getString("admin_user", "postgres");
-        String adminPass = dbConfig.getString("admin_pass", "introduction");
-        Flyway flyway = Flyway.configure().dataSource(url, adminUser, adminPass).load();
-
-        try {
-            flyway.migrate();
-            return Promise.<Void>succeededPromise().future();
-        } catch (FlywayException fe) {
-            return Promise.<Void>failedPromise(fe).future();
-        }
-    }
-
-    /**
-     * Configures the {@link Router} for use in handling HTTP requests in the server
-     * @param unused A {@link Void} parameter which is ignored
-     * @return A {@link Future}, potentially containing the {@link Router}, if this succeeds
-     */
-    Future<Router> configureRouter(Void unused) {
-        Router router = Router.router(vertx);
-
-        SessionStore store = LocalSessionStore.create(vertx);
-        router.route().handler(LoggerHandler.create());
-        router.route().handler(SessionHandler.create(store));
-        router.route().handler(CorsHandler.create("localhost"));
-        router.route().handler(CSRFHandler.create("QBR2QTlCvBaAugUBYdd6uWHkx4qA5yaVyxX/GyIgX0xwD71U1KamTWfyBmSgt3VHefeaNrdqdbvh"));
-        router.get("/api/v1/hello").handler(this::helloHandler);
-        router.get("/api/v1/hello/:name").handler(this::helloByNameHandler);
-        router.route().handler(StaticHandler.create("web"));
-
-        return Promise.succeededPromise(router).future();
-    }
-
-    /**
-     * Using the provided {@link Router}, start and {@link HttpServer} and use the router as the handler
-     * @param A {@link Router} configured in the previous method
-     * @return A {@link Future} which will contain the {@link HttpServer} on successful creation of the server
-     */
-    Future<HttpServer> startHttpServer(Router router) {
-        JsonObject http = loadedConfig.getJsonObject("http");
-        int httpPort = http.getInteger("port");
-        HttpServer server = vertx.createHttpServer().requestHandler(router);
-
-        return Future.<HttpServer>future(promise -> server.listen(httpPort, promise));
-    }
-
-    /**
      * Deploy our other {@link io.vertx.core.Verticle}s in concurrently
      * https://vertx.io/docs/vertx-core/java/#_concurrent_composition
-     * @param server The {@link HttpServer} instance (Not used in this method)
+     * @param unused A {@link Void} instance (Not used in this method)
      * @return A {@link Future} which is resolved once both of the Verticles are deployed
      */
-    Future<Void> deployOtherVerticles(HttpServer server) {
-        Future<String> helloGroovy = Future.future(promise -> vertx.deployVerticle("Hello.groovy", promise));
-        Future<String> helloJs = Future.future(promise -> vertx.deployVerticle("Hello.js", promise));
+    Future<Void> deployOtherVerticles(Void unused) {
+        DeploymentOptions opts = new DeploymentOptions().setConfig(loadedConfig);
 
-        return CompositeFuture.all(helloGroovy, helloJs).mapEmpty();
-    }
+        Future<String> dbVerticle = Future.future(promise -> vertx.deployVerticle(new DatabaseVerticle(), opts, promise));
+        Future<String> webVerticle = Future.future(promise -> vertx.deployVerticle(new WebVerticle(), opts, promise));
+        Future<String> helloGroovy = Future.future(promise -> vertx.deployVerticle("Hello.groovy", opts, promise));
+        Future<String> helloJs = Future.future(promise -> vertx.deployVerticle("Hello.js", opts, promise));
 
-    /**
-     * A handler for requests to the `/api/v1/hello` REST endpoint
-     * @param ctx The {@link RoutingContext} of the request
-     */
-    void helloHandler(RoutingContext ctx) {
-        vertx.eventBus().request("hello.vertx.addr", "", reply -> {
-            ctx.request().response().end((String)reply.result().body());
-        });
-    }
-
-    /**
-     * A handler for requests to the `/api/v1/hello/:name` REST endpoint
-     * @param ctx The {@link RoutingContext} of the request
-     */
-    void helloByNameHandler(RoutingContext ctx) {
-        String name = ctx.pathParam("name");
-        vertx.eventBus().request("hello.named.addr", name, reply -> {
-            ctx.request().response().end((String)reply.result().body());
-        });
+        return CompositeFuture.all(helloGroovy, helloJs, dbVerticle, webVerticle).mapEmpty();
     }
 }
