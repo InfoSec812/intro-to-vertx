@@ -1,5 +1,12 @@
 {
   "http": {
     "port": 8080
+  },
+  "db": {
+    "url": "jdbc:postgresql://127.0.0.1:5432/todo",
+    "user": "introduction",
+    "password": "introduction",
+    "admin_user": "postres",
+    "admin_pass": "introduction"
   }
 }
